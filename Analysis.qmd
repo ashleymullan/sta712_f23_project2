@@ -1,0 +1,42 @@
+---
+title: "Analysis"
+author: "Ashley E. Mullan"
+format: html
+---
+
+```{r, message = FALSE, warning = FALSE, echo = FALSE}
+library(tidyverse)
+library(skimr)
+library(visdat)
+library(janitor)
+data <- read_csv("SeoulBikeData.csv", locale=locale(encoding="latin1"))
+data <- data |> 
+  clean_names() |>
+  mutate(date = as.Date(date,
+                        format = "%m/%d/%Y"),
+         seasons = as.factor(seasons),
+         holiday = as.factor(holiday),
+         functioning_day = as.factor(functioning_day))
+```
+
+```{r}
+skim(data)
+vis_miss(data)
+glimpse(data)
+```
+
+```{r}
+data |>
+  ggplot(aes(x = rented_bike_count)) +
+  geom_histogram()
+```
+
+```{r}
+data |> pull(rented_bike_count) |> table()
+```
+
+```{r}
+data |> 
+  dplyr::select(date, hour, rented_bike_count) |>
+  head()
+```
