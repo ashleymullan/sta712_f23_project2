@@ -9,6 +9,12 @@ library(tidyverse)
 library(skimr)
 library(visdat)
 library(janitor)
+library(gtsummary)
+library(gridExtra)
+library(grid)
+library(statmod)
+library(pscl)
+library(countreg)
 data <- read_csv("SeoulBikeData.csv", locale=locale(encoding="latin1"))
 data <- data |> 
   clean_names() |>
@@ -20,9 +26,58 @@ data <- data |>
 ```
 
 ```{r}
+qresid_plot <- function(xvar, model, df){
+  qres <- qresid(model)
+  p <-  df |> 
+        mutate(qres = qres) |>
+        ggplot(aes(x = get(xvar), y = qres)) +
+        geom_point(size = 0.8) +
+        geom_smooth(color = "red", linewidth = 0.8,
+                    method = "loess", formula = y ~ x,
+                    se = FALSE) +
+        labs(title = "Quantile Residual Plot",
+        x = xvar,
+        y = "Quantile Residual") +
+    theme_minimal() +
+    theme(text = element_text(size = 12))
+  p
+}
+
+vis_dist <- function(xvar, df){
+  colname <- df |> dplyr::select({{ xvar }}) |> colnames()
+  if(is.numeric(df |> pull(colname))) {
+    df |>
+      ggplot(aes(x = {{ xvar }})) + 
+      geom_histogram(fill = "black") +
+      theme_minimal() +
+      labs(title = "",
+           x = colname) +
+      theme(plot.title = element_text(size = 10),
+            axis.text = element_text(size = 10),
+            axis.text.x = element_text(size = 8, angle = 50, vjust = 0.6),
+            axis.title = element_text(size = 10))
+      
+  }
+  else {
+    df |>
+    ggplot(aes(x = {{ xvar }})) +
+    geom_bar(fill = "black") +
+    theme_minimal() +
+    labs(title = paste0(""),
+           x = colname) +
+    theme(plot.title = element_text(size = 10),
+          axis.text.x = element_text(size = 8, angle = 50, vjust = 0.6),
+          axis.text.y = element_text(size = 10),
+          axis.title = element_text(size = 10))
+  }
+}
+```
+
+```{r}
 skim(data)
 vis_miss(data)
 glimpse(data)
+vis_cor(data |> dplyr::select(where(is.numeric)))
 ```
 
 ```{r}
@@ -35,8 +90,153 @@ data |>
 data |> pull(rented_bike_count) |> table()
 ```
 
+Summary Table
 ```{r}
-data |> 
-  dplyr::select(date, hour, rented_bike_count) |>
-  head()
+tbl <- data |> 
+  tbl_summary(
+    statistic = list(
+      all_continuous() ~ "mean:{mean}, sd:{sd}",
+      all_categorical() ~ "n = {n}"
+    ))
+tbl
+```
+
+Visualization
+```{r}
+bikes <- vis_dist(rented_bike_count, data)
+temp <- vis_dist(temperature_c, data)
+hum <- vis_dist(humidity_percent, data)
+wind <- vis_dist(wind_speed_m_s, data)
+vis <- vis_dist(visibility_10m, data)
+dew <- vis_dist(dew_point_temperature_c, data)
+sun <- vis_dist(solar_radiation_mj_m2, data)
+rain <- vis_dist(rainfall_mm, data)
+snow <- vis_dist(snowfall_cm, data)
+seas <- vis_dist(seasons, data)
+hol <- vis_dist(holiday, data)
+func <- vis_dist(functioning_day, data)
+
+vis_plot <- grid.arrange(bikes, temp, hum, wind, vis, 
+             sun, rain, snow, seas, ncol = 3,
+             top = textGrob("Variable Distributions"))
+ggsave("vis_plot.pdf", plot = vis_plot, width = 6, height = 5, units = "in")
+```
+
+1. After controlling for precipitation, does the visibility have an effect on the number of bikes
+rented on a given day?
+Yes.
+```{r}
+m1 <- hurdle(rented_bike_count ~ log(snowfall_cm+1) + log(rainfall_mm+1) + log(3000 - visibility_10m), 
+             dist = "negbin",
+             data = data)
+
+m1_red <- hurdle(rented_bike_count ~ log(snowfall_cm+1) + log(rainfall_mm+1), 
+             dist = "negbin",
+             data = data)
+
+rootogram(m1)
+qr_m1 <- countreg::qresiduals(m1)
+qrp1_m1 <- data.frame(x = log(data$snowfall_cm + 1), resids = qr_m1) |>
+  ggplot(aes(x = x, y = resids)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  labs(x = "snowfall", y = "quantile residuals")
+
+qrp2_m1 <- data.frame(x = log(data$rainfall_mm + 1), resids = qr_m1) |>
+  ggplot(aes(x = x, y = resids)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  labs(x = "rainfall", y = "quantile residuals")
+
+qrp3_m1 <- data.frame(x = log(3000 - data$visibility_10m), resids = qr_m1) |>
+  ggplot(aes(x = x, y = resids)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  labs(x = "visibility", y = "quantile residuals")
+
+qrm1_plot <- grid.arrange(qrp1_m1, qrp2_m1, qrp3_m1, top = textGrob("Quantile Residuals"))
+ggsave("qrm1.pdf", qrm1_plot, width = 6, height = 4, units = "in")
+
+cor(data |> dplyr::select(snowfall_cm, rainfall_mm, visibility_10m)) |> round(3)
+
+2*(m1$loglik - m1_red$loglik)
+pchisq(2*(m1$loglik - m1_red$loglik), 6, lower.tail=F)
+
+summary(m1)
+
+```
+
+After controlling for temperature, humidity, sunlight, precipitation, and wind, does season
+have an effect on the number of bikes rented on a given day?
+Yes
+```{r}
+m2 <- hurdle(rented_bike_count ~ temperature_c + humidity_percent + log(solar_radiation_mj_m2 + 1) + log(snowfall_cm+1) + log(rainfall_mm+1) + wind_speed_m_s + seasons, 
+             dist = "negbin",
+             data = data)
+m2_red <- hurdle(rented_bike_count ~ temperature_c + humidity_percent + log(solar_radiation_mj_m2 + 1) + log(snowfall_cm+1) + log(rainfall_mm+1) + wind_speed_m_s, 
+             dist = "negbin",
+             data = data)
+rootogram(m2)
+summary(m2)
+
+qr_m2 <- countreg::qresiduals(m2)
+qrp1_m2 <- data.frame(x = data$temperature_c, resids = qr_m2) |>
+  ggplot(aes(x = x, y = resids)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  labs(x = "temp", y = "quantile residuals")
+
+qrp2_m2 <- data.frame(x = data$humidity_percent, resids = qr_m2) |>
+  ggplot(aes(x = x, y = resids)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  labs(x = "humidity", y = "quantile residuals")
+
+qrp3_m2 <- data.frame(x = log(data$solar_radiation_mj_m2 + 1), resids = qr_m2) |>
+  ggplot(aes(x = x, y = resids)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  labs(x = "solar", y = "quantile residuals")
+
+qrp4_m2 <- data.frame(x = log(data$snowfall_cm + 1), resids = qr_m2) |>
+  ggplot(aes(x = x, y = resids)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  labs(x = "snowfall", y = "quantile residuals")
+
+qrp5_m2 <- data.frame(x = log(data$rainfall_mm + 1), resids = qr_m2) |>
+  ggplot(aes(x = x, y = resids)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  labs(x = "rainfall", y = "quantile residuals")
+
+qrp6_m2 <- data.frame(x = data$wind_speed_m_s, resids = qr_m2) |>
+  ggplot(aes(x = x, y = resids)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  labs(x = "wind", y = "quantile residuals")
+
+qrp7_m2 <- data.frame(x = data$seasons, resids = qr_m2) |>
+  ggplot(aes(x = x, y = resids)) +
+  geom_point() +
+  geom_smooth() +
+  theme_bw() +
+  labs(x = "seasons", y = "quantile residuals") +
+  theme(axis.text.x = element_text(angle = 90))
+
+grid.arrange(qrp1_m2, qrp2_m2, qrp3_m2, qrp4_m2, qrp5_m2, qrp6_m2, qrp7_m2, ncol = 4)
+
+cor(data |> dplyr::select(temperature_c, humidity_percent, solar_radiation_mj_m2,
+                          snowfall_cm, rainfall_mm, wind_speed_m_s)) |> round(3)
+pchisq(2*(m2$loglik - m2_red$loglik), 2, lower.tail=F)
+2*(m2$loglik - m2_red$loglik)
 ```
