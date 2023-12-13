@@ -126,6 +126,10 @@ ggsave("vis_plot.pdf", plot = vis_plot, width = 6, height = 5, units = "in")
 rented on a given day?
 Yes.
 ```{r}
+
+m0 <- glm(rented_bike_count ~ log(snowfall_cm + 1) + log(rainfall_mm+1) + log(3000 - visibility_10m),
+          data = data,
+          family = "poisson")
 m1 <- hurdle(rented_bike_count ~ log(snowfall_cm+1) + log(rainfall_mm+1) + log(3000 - visibility_10m), 
              dist = "negbin",
              data = data)
@@ -133,7 +137,7 @@ m1 <- hurdle(rented_bike_count ~ log(snowfall_cm+1) + log(rainfall_mm+1) + log(3
 m1_red <- hurdle(rented_bike_count ~ log(snowfall_cm+1) + log(rainfall_mm+1), 
              dist = "negbin",
              data = data)
-
+rootogram(m0)
 rootogram(m1)
 qr_m1 <- countreg::qresiduals(m1)
 qrp1_m1 <- data.frame(x = log(data$snowfall_cm + 1), resids = qr_m1) |>
